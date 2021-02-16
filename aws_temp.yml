@@ -1,27 +1,27 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: raisetech work.
 Resources:
-  myVPC:
+  myVPC:                                    #VPC作成
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: 10.0.0.0/16
       Tags:
       - Key: Name
         Value: raisetech-vpc-2
-  myInternetGateway:
+  myInternetGateway:                         #インターネットゲートウェイ作成
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
       - Key: Name
         Value: raisetech-igw
-  AttachGateway:
+  AttachGateway:                              #VPCとインターネットゲートウェイをアタッチ
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
         VpcId:
           Ref: myVPC
         InternetGatewayId:
           Ref: myInternetGateway
-  publicRouteTable:
+  publicRouteTable:                            #ルートテーブル作成
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId:  
@@ -29,7 +29,7 @@ Resources:
       Tags:
       - Key: Name
         Value: public-route-table 
-  publicRoute:
+  publicRoute:                                  #ルートテーブルのルートを指定(インターネットゲートウェイ用)
     Type: AWS::EC2::Route
     DependsOn: AttachGateway
     Properties:
@@ -38,7 +38,7 @@ Resources:
        DestinationCidrBlock: 0.0.0.0/0
        GatewayId:
          Ref: myInternetGateway
-  publicsubnet1:
+  publicsubnet1:                                #パブリックサブネット１作成(EC2置き場)
     Type: AWS::EC2::Subnet
     Properties:
       VpcId:
@@ -48,7 +48,7 @@ Resources:
       Tags:
       - Key: Name
         Value: main-public-subnet
-  publicsubnet2:
+  publicsubnet2:                                 #パブリックサブネット2作成(ELB指定用)
     Type: AWS::EC2::Subnet
     Properties:
       VpcId:
@@ -58,7 +58,7 @@ Resources:
       Tags:
       - Key: Name
         Value: sub-public-subnet
-  privatesubnet1:
+  privatesubnet1:                                 #プライベートサブネット1作成(RDS置き場)
     Type: AWS::EC2::Subnet
     Properties:
       VpcId:
@@ -68,7 +68,7 @@ Resources:
       Tags:
       - Key: Name
         Value: main-private-subnet
-  privatesubnet2:
+  privatesubnet2:                                 #プライベートサブネット2作成(RDSサブネットグループ用)
     Type: AWS::EC2::Subnet
     Properties:
       VpcId:
@@ -78,7 +78,7 @@ Resources:
       Tags:
       - Key: Name
         Value: sub-private-subnet
-  privatesubnet3:
+  privatesubnet3:                                 #プライベートサブネット3作成(RDSサブネットグループ用)
     Type: AWS::EC2::Subnet
     Properties:
       VpcId:
@@ -88,3 +88,228 @@ Resources:
       Tags:
       - Key: Name
         Value: sub2-private-subnet
+  myNetworkAcl:                                   #ネットワークACL作成
+      Type: AWS::EC2::NetworkAcl
+      Properties:
+         VpcId:
+           Ref: myVPC
+         Tags:
+         - Key: Name
+           Value: acl-01
+  InboundRule:                                    #ACLインバウンド作成
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+       NetworkAclId:
+         Ref: myNetworkAcl
+       RuleNumber: 100
+       Protocol: -1
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+  OutboundRule:                                   #ACLアウトバウンド作成
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+       NetworkAclId:
+         Ref: myNetworkAcl
+       RuleNumber: 100
+       Protocol: -1
+       Egress: true
+       RuleAction: allow
+       CidrBlock: 0.0.0.0/0
+  mySubnetNetworkAclAssociation1:                  #パブリックサブネット1とネットワークACLの紐付
+     Type: AWS::EC2::SubnetNetworkAclAssociation
+     Properties:
+       SubnetId:
+         Ref: publicsubnet1
+       NetworkAclId:
+         Ref: myNetworkAcl
+  mySubnetRouteTableAssociation1:                  #パブリックサブネット1とルートテーブルの紐付
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: publicsubnet1
+      RouteTableId:
+        Ref: publicRouteTable
+  mySubnetNetworkAclAssociation2:                  #パブリックサブネット2とネットワークACLの紐付
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+        Ref: publicsubnet2
+      NetworkAclId:
+        Ref: myNetworkAcl
+  mySubnetRouteTableAssociation2:                  #パブリックサブネット2とルートテーブルの紐付
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: publicsubnet2
+      RouteTableId:
+        Ref: publicRouteTable
+  InstanceSecurityGroup:                          #セキュリティグループ(EC2用)設定
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow http,SSH,3000 to client host"
+      VpcId:
+         Ref: myVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: !Ref ELBSecurityGroup
+      
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+
+      - IpProtocol: tcp
+        FromPort: 3000
+        ToPort: 3000
+        SourceSecurityGroupId: !Ref ELBSecurityGroup
+
+      SecurityGroupEgress:
+      - IpProtocol: -1
+        CidrIp: 0.0.0.0/0
+      Tags: 
+      - Key: "Name"
+        Value: "EC2sg"
+  WebInstance:                                  #EC2作成
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: "ap-northeast-1a"
+      InstanceType: "t2.micro"
+      ImageId: "ami-01748a72bed07727c"            #自分で作成したインスタンスのAMI ID
+      KeyName: "mykey"
+      SecurityGroupIds:
+      - Ref: InstanceSecurityGroup
+      SubnetId: 
+        Ref: publicsubnet1
+  MyDBSubnetGroup: 
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties: 
+      DBSubnetGroupDescription: "RDS subnetgroup"
+      SubnetIds: 
+      - Ref: privatesubnet1
+      - Ref: privatesubnet2
+      - Ref: privatesubnet3
+  EC2rdsSecurityGroup:                          #セキュリティグループ(RDS用)設定
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow InstanceSecurityGroup,3306 to client host"
+      VpcId:
+         Ref: myVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 0
+        ToPort: 65535
+        SourceSecurityGroupId: !Ref InstanceSecurityGroup
+      
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        CidrIp: 0.0.0.0/0
+
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        CidrIp: 0.0.0.0/0
+      Tags: 
+      - Key: "Name"
+        Value: "RDSsg"
+  DBSecurityGroup:                                #DBセキュリティグループ作成
+    Type: AWS::RDS::DBSecurityGroup
+    Properties: 
+      EC2VpcId: 
+        Ref: myVPC
+      DBSecurityGroupIngress: 
+      - EC2SecurityGroupId: !Ref EC2rdsSecurityGroup
+      GroupDescription: "Ingress for Amazon EC2 security group"
+  MyDB:                                          #RDS作成
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBInstanceIdentifier: 'database-2'
+      DBName: 'mydb'
+      DBInstanceClass: db.t2.micro
+      AllocatedStorage: '20'
+      Engine: MySQL
+      EngineVersion: 8.0.20
+      MasterUsername: 'admin'
+      MasterUserPassword: 'dbpassword'
+      DBSecurityGroups: 
+        - Ref: DBSecurityGroup
+      DBSubnetGroupName: 
+        Ref: MyDBSubnetGroup
+  ELBSecurityGroup:                          #セキュリティグループ(ELB用)設定
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow HTTP to client host"
+      VpcId:
+         Ref: myVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: "-1"
+        CidrIp: 0.0.0.0/0
+      Tags: 
+      - Key: "Name"
+        Value: "ELBsg"
+  myELB:                                              #ロードバランサー作成
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      IpAddressType: ipv4
+      LoadBalancerAttributes: 
+        - Key: access_logs.s3.enabled
+          Value: "true"
+        - Key: access_logs.s3.bucket
+          Value:
+            Ref: "S3LogBucket"
+      Name: "raisetech-alb-3"
+      Scheme: internet-facing
+      SecurityGroups: 
+        - Ref: ELBSecurityGroup
+      SubnetMappings: 
+        - SubnetId: !Ref publicsubnet1
+        - SubnetId: !Ref publicsubnet2
+      Type: application
+  S3LogBucket:                                        #S3(アクセスログ格納用)作成
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: "raisetech-work-elb-log2"
+  ELBLogBucketPolicy:                                 #S3バケットポリシー
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: 
+        Ref: S3LogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: "AWSConsole-AccessLogs-Policy-1612524406069"
+        Statement:
+          - Sid:  "AWSConsoleStmt-1612524406069"
+            Effect: "Allow"
+            Principal:
+              AWS: "arn:aws:iam::582318560864:root"
+            Action:
+              - "s3:PutObject"
+            Resource: 
+              - !Sub "arn:aws:s3:::raisetech-work-elb-log2/AWSLogs/408055264882/*"
+
+          - Sid:  "AWSLogDeliveryWrite"
+            Effect: "Allow"
+            Principal:
+              Service: "delivery.logs.amazonaws.com"
+            Action:
+              - "s3:PutObject"
+            Resource: 
+              - !Sub "arn:aws:s3:::raisetech-work-elb-log2/AWSLogs/408055264882/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+        
+          - Sid:  "AWSLogDeliveryAclCheck"
+            Effect: "Allow"
+            Principal:
+              Service: "delivery.logs.amazonaws.com"
+            Action:
+              - "s3:GetBucketAcl"
+            Resource: 
+              - !Sub "arn:aws:s3:::raisetech-work-elb-log2" 
